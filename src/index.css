@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    --font-heading: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif;
+
+    /* Primary brand palette */
+    --color-primary: #D7A49A;
+    --color-primary-light: #E7C2BA;
+    --color-primary-dark: #B97F74;
+    --color-primary-deep: #8E5347;
+
+    /* Backgrounds & surfaces */
+    --color-bg-warm: #FFF1E4;
+    --color-bg-card: rgba(255, 255, 255, 0.88);
+    --color-bg-surface: #FFFFFF;
+
+    /* Text & Neutral */
+    --color-text-main: #2C211E;
+    --color-text-muted: #7A6963;
+    --color-border-warm: #EBDAD2;
+    --color-border-focus: #D7A49A;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #FFF1E4;
+    color: #2C211E;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+  }
+}
+
+/* Custom micro-animations & helpers */
+@keyframes floatSlow {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(1deg);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes slideUpFade {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-float-slow {
+  animation: floatSlow 7s ease-in-out infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 4s ease-in-out infinite;
+}
+
+.animate-slide-up {
+  animation: slideUpFade 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Glassmorphism card */
+.glass-card {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(215, 164, 154, 0.3);
+  box-shadow: 
+    0 10px 30px -10px rgba(215, 164, 154, 0.2),
+    0 20px 40px -15px rgba(44, 33, 30, 0.05);
+}
+
+.glass-card-hover {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 
+    0 14px 34px -10px rgba(215, 164, 154, 0.28),
+    0 24px 48px -12px rgba(44, 33, 30, 0.08);
+}
