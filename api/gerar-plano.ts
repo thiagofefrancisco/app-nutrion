@@ -5,13 +5,19 @@ import fs from 'node:fs';
  * Lê a GEMINI_API_KEY com segurança estritamente no lado do servidor
  */
 function getGeminiApiKey(): string | undefined {
-  if (process.env.GEMINI_API_KEY) {
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
     return process.env.GEMINI_API_KEY.trim();
+  }
+  if (process.env.VITE_GEMINI_API_KEY && process.env.VITE_GEMINI_API_KEY.trim()) {
+    return process.env.VITE_GEMINI_API_KEY.trim();
+  }
+  if (process.env.GOOGLE_API_KEY && process.env.GOOGLE_API_KEY.trim()) {
+    return process.env.GOOGLE_API_KEY.trim();
   }
   try {
     if (fs.existsSync('.env')) {
       const content = fs.readFileSync('.env', 'utf-8');
-      const match = content.match(/GEMINI_API_KEY=(.+)/);
+      const match = content.match(/(?:VITE_)?GEMINI_API_KEY=(.+)/);
       if (match && match[1]) {
         return match[1].trim();
       }
@@ -141,16 +147,22 @@ export async function gerarPlanoComIA(dadosDoPaciente: string) {
  */
 export default async function handler(req: any, res: any) {
   // CORS Headers
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-  );
+  if (res.setHeader) {
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    );
+  }
 
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
+    if (res.status) {
+      res.status(200).end();
+    } else {
+      res.end();
+    }
     return;
   }
 
@@ -160,7 +172,32 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
+    let rawBody = req.body;
+    if (!rawBody || typeof rawBody !== 'object') {
+      if (typeof rawBody === 'string') {
+        try {
+          rawBody = JSON.parse(rawBody);
+        } catch {
+          // ignore
+        }
+      } else {
+        // Tenta ler o stream do request caso não tenha sido pré-processado pelo servidor
+        try {
+          const chunks: any[] = [];
+          for await (const chunk of req) {
+            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+          }
+          if (chunks.length > 0) {
+            const buffer = Buffer.concat(chunks).toString('utf-8');
+            rawBody = JSON.parse(buffer);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    const body = rawBody || {};
     const dadosDoPaciente = body.dados_do_paciente || body.dadosDoPaciente;
 
     if (!dadosDoPaciente || typeof dadosDoPaciente !== 'string' || !dadosDoPaciente.trim()) {

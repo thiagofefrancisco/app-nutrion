@@ -1,4 +1,5 @@
 import type { Paciente, PlanoSemanalConteudo, DiaPlano } from '@/types/dashboard';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { calculateAge } from './formatters';
 
 const DIAS_SEMANA = [
@@ -77,7 +78,89 @@ export function formatPatientProfileForPrompt(paciente: Paciente): string {
 }
 
 /**
- * Chama a Serverless Function /api/gerar-plano sem expor chaves ao cliente
+ * Fallback direto no cliente caso a Serverless Function esteja indisponível
+ */
+async function gerarPlanoDiretoNoCliente(dadosDoPaciente: string, apiKey: string): Promise<PlanoSemanalConteudo> {
+  const genAI = new GoogleGenerativeAI(apiKey.trim());
+  const prompt = `Você é um nutricionista clínico profissional especialista na culinária e rotina brasileira.
+Gere um plano alimentar semanal completo, saudável e diversificado com base nos dados do paciente fornecidos abaixo.
+
+Dados do Paciente (Metas, Alergias, Restrições e Histórico):
+${dadosDoPaciente}
+
+# Regras Críticas de Execução:
+- Você deve responder APENAS e estritamente o objeto JSON solicitado.
+- Não inclua blocos de código markdown (como \`\`\`json ... \`\`\`), explicações, introduções ou textos complementares.
+- Adapte o cardápio rigorosamente a quaisquer alergias ou restrições descritas nos dados.
+- Utilize alimentos comuns, acessíveis e culturalmente aceitos no Brasil.
+- Evite repetições monótonas de alimentos nos dias seguidos.
+
+O formato do JSON retornado deve seguir exatamente esta estrutura:
+{
+  "plano_semanal": [
+    {
+      "dia": "Segunda-feira",
+      "refeicoes": {
+        "cafe_da_manha": ["Opção 1", "Opção 2", "Opção 3", "Opção 4", "Opção 5"],
+        "lanche_manha": ["Opção 1", "Opção 2", "Opção 3", "Opção 4", "Opção 5"],
+        "almoco": ["Opção 1", "Opção 2", "Opção 3", "Opção 4", "Opção 5"],
+        "lanche_tarde": ["Opção 1", "Opção 2", "Opção 3", "Opção 4", "Opção 5"],
+        "jantar": ["Opção 1", "Opção 2", "Opção 3", "Opção 4", "Opção 5"]
+      }
+    }
+  ]
+}`;
+
+  const candidateModels = [
+    'gemini-3.1-flash-lite',
+    'gemini-3.5-flash-lite',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-flash-lite-latest',
+  ];
+
+  let lastError: any = null;
+
+  for (const modelName of candidateModels) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.7,
+        },
+      });
+
+      const result = await model.generateContent(prompt);
+      const rawText = result.response.text();
+      if (!rawText) continue;
+
+      const cleaned = rawText
+        .replace(/^```json\s*/i, '')
+        .replace(/^```\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+
+      const parsed = JSON.parse(cleaned);
+      if (parsed.plano_semanal && Array.isArray(parsed.plano_semanal)) {
+        return {
+          plano_semanal: parsed.plano_semanal,
+          gerado_por_ia: true,
+          criado_em: new Date().toISOString(),
+        };
+      }
+    } catch (err: any) {
+      console.warn(`[NutriOn Client] Tentativa com modelo ${modelName} falhou:`, err.message || err);
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('Não foi possível gerar o plano alimentar via cliente.');
+}
+
+/**
+ * Chama a Serverless Function /api/gerar-plano sem expor chaves ao cliente,
+ * com fallback direto inteligente e diagnóstico claro de variáveis de ambiente.
  */
 export async function gerarPlanoComIAApi(paciente: Paciente): Promise<PlanoSemanalConteudo> {
   const dadosDoPaciente = formatPatientProfileForPrompt(paciente);
@@ -100,28 +183,57 @@ export async function gerarPlanoComIAApi(paciente: Paciente): Promise<PlanoSeman
 
     clearTimeout(timeoutId);
 
-    if (!res.ok) {
-      let errMsg = 'Não foi possível gerar o plano com IA no momento. Deseja tentar novamente ou criar um Plano Manual?';
-      try {
-        const errJson = await res.json();
-        if (errJson.error) errMsg = errJson.error;
-      } catch {
-        // fallback
+    if (res.ok) {
+      const data = await res.json();
+      if (data.plano_semanal && Array.isArray(data.plano_semanal)) {
+        return {
+          plano_semanal: data.plano_semanal,
+          gerado_por_ia: true,
+          criado_em: new Date().toISOString(),
+        };
       }
-      throw new Error(errMsg);
     }
 
-    const data = await res.json();
-
-    if (!data.plano_semanal || !Array.isArray(data.plano_semanal)) {
-      throw new Error('A resposta da IA não contém o formato semanal esperado.');
+    // Se o backend retornou erro, extrai mensagem e detalhes
+    let apiErrorMsg = '';
+    let apiErrorDetails = '';
+    try {
+      const errJson = await res.json();
+      apiErrorMsg = errJson.error || '';
+      apiErrorDetails = errJson.details || '';
+    } catch {
+      apiErrorDetails = `Status HTTP ${res.status} (${res.statusText || 'Não encontrado'})`;
     }
 
-    return {
-      plano_semanal: data.plano_semanal,
-      gerado_por_ia: true,
-      criado_em: new Date().toISOString(),
-    };
+    // Fallback: se houver VITE_GEMINI_API_KEY no cliente e o backend falhar
+    const clientKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
+    if (clientKey) {
+      console.warn('[NutriOn] Endpoint /api/gerar-plano indisponível. Executando fallback do Gemini direto no cliente...');
+      return await gerarPlanoDiretoNoCliente(dadosDoPaciente, clientKey);
+    }
+
+    // Se o erro do servidor for falta da chave de API
+    if (
+      apiErrorDetails.includes('GEMINI_API_KEY não foi configurada') ||
+      apiErrorMsg.includes('GEMINI_API_KEY')
+    ) {
+      throw new Error(
+        'A variável de ambiente GEMINI_API_KEY não está configurada no seu painel de hospedagem (Vercel). Acesse o painel da Vercel > Settings > Environment Variables, adicione a GEMINI_API_KEY e faça um novo deploy.'
+      );
+    }
+
+    // Se a rota da API serverless retornou 404 (ex: deploy em hospedagem estática sem serverless)
+    if (res.status === 404) {
+      throw new Error(
+        'A função serverless /api/gerar-plano retornou 404. Verifique se o projeto foi configurado com suporte a Serverless Functions na Vercel ou adicione a variável VITE_GEMINI_API_KEY nas Environment Variables.'
+      );
+    }
+
+    throw new Error(
+      apiErrorDetails
+        ? `Não foi possível gerar o plano com IA. Detalhe: ${apiErrorDetails}`
+        : apiErrorMsg || 'Não foi possível gerar o plano com IA no momento. Deseja tentar novamente ou criar um Plano Manual?'
+    );
   } catch (error: any) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
